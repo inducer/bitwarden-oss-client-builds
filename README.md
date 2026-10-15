@@ -6,7 +6,7 @@ This repository contains a GitHub Actions workflow that checks out [`bitwarden/c
 
 | Target | Status | Build approach |
 | --- | --- | --- |
-| Linux x86_64 `.deb` | Configured | Desktop's upstream OSS webpack build followed by electron-builder's Debian target |
+| Linux x86_64 `.deb` | Configured | Desktop native module build, upstream OSS webpack build, then electron-builder's Debian target |
 | Firefox extension | Configured | `build:prod:firefox` upstream workspace script |
 | Chromium extension | Configured | `build:prod:chrome` upstream workspace script |
 | Android | Configured | Checks out `bitwarden/android` and builds the `fdroid` release flavor APK (`:app:assembleFdroidRelease`), which excludes standard-flavor Google Play/Firebase/Billing integrations. |
@@ -37,6 +37,6 @@ To update the defaults, change the tag and commit together in `upstream-versions
 
 ## Build details and limitations
 
-The workflow targets Ubuntu 22.04, follows the npm workspace scripts from the pinned clients commit for browser builds and the desktop `build:oss` script, and builds Android from its pinned commit with JDK 21 and Gradle. Browser, desktop, and Android builds run as independent parallel jobs; a publish job waits for all three and attaches their artifacts plus `SOURCE-REFS.txt` to a GitHub Release. A workflow-level concurrency group allows only one build run at a time (without canceling the active run). The Firefox and Chromium ZIPs are packaged from `apps/browser/build`; the `.deb` is taken from the desktop `dist` directory; and the Android F-Droid APK is taken from `app/build/outputs/apk/fdroid/release`. Upstream changes to output paths, Node/Rust/Java requirements, or packaging configuration may require updating this workflow.
+The workflow targets Ubuntu 22.04, follows the npm workspace scripts from the pinned clients commit for browser builds, and builds the desktop native module before its `build:oss` script and electron-builder packaging. The native build requires Linux development headers including `libxss-dev`. Android is built from its pinned commit with JDK 21 and Gradle. Browser, desktop, and Android builds run as independent parallel jobs; a publish job waits for all three and attaches their artifacts plus `SOURCE-REFS.txt` to a GitHub Release. A workflow-level concurrency group allows only one build run at a time (without canceling the active run). The Firefox and Chromium ZIPs are packaged from `apps/browser/build`; the `.deb` is taken from the desktop `dist` directory; and the Android F-Droid APK is taken from `app/build/outputs/apk/fdroid/release`. Upstream changes to output paths, Node/Rust/Java requirements, or packaging configuration may require updating this workflow.
 
 The release action requires `contents: write`, already declared at workflow level. For a public repository, builds run on upstream source, so review upstream changes and treat produced files as untrusted until validated.

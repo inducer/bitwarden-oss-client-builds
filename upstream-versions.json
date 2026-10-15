@@ -1,0 +1,10 @@
+{
+  "clients": {
+    "tag": "browser-v2026.10.0",
+    "commit": "b449ac1d255784380d75ef026343198891286be7"
+  },
+  "android": {
+    "tag": "v2026.9.1-bwpm",
+    "commit": "770d7075cfc8e7fd5d7de6f90410585486b53206"
+  }
+}

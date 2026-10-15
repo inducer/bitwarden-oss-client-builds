@@ -1,0 +1,113 @@
+name: Build open-source Bitwarden clients
+
+on:
+  workflow_dispatch:
+    inputs:
+      clients_ref:
+        description: Optional override (tag or commit SHA) for bitwarden/clients; default is the pinned release in upstream-versions.json
+        required: false
+        type: string
+      android_ref:
+        description: Optional override (tag or commit SHA) for bitwarden/android; default is the pinned release in upstream-versions.json
+        required: false
+        type: string
+  schedule:
+    - cron: '17 5 * * 1'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build.yml'
+      - 'scripts/**'
+      - 'upstream-versions.json'
+      - 'README.md'
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve upstream pins
+        id: upstream
+        env:
+          CLIENTS_OVERRIDE: ${{ inputs.clients_ref }}
+          ANDROID_OVERRIDE: ${{ inputs.android_ref }}
+        run: |
+          clients_ref="${CLIENTS_OVERRIDE:-$(jq -r '.clients.commit' upstream-versions.json)}"
+          android_ref="${ANDROID_OVERRIDE:-$(jq -r '.android.commit' upstream-versions.json)}"
+          echo "clients_ref=$clients_ref" >> "$GITHUB_OUTPUT"
+          echo "android_ref=$android_ref" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Upstream source pins"
+            echo "- bitwarden/clients: $clients_ref (default tag $(jq -r '.clients.tag' upstream-versions.json))"
+            echo "- bitwarden/android: $android_ref (default tag $(jq -r '.android.tag' upstream-versions.json))"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: ''
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl file libssl-dev pkg-config rpm
+      - name: Check out upstream and remove licensed code
+        env:
+          CLIENTS_REF: ${{ steps.upstream.outputs.clients_ref }}
+        run: bash ./scripts/prepare-clients.sh "$CLIENTS_REF"
+      - name: Check out Android source
+        uses: actions/checkout@v4
+        with:
+          repository: bitwarden/android
+          ref: ${{ steps.upstream.outputs.android_ref }}
+          path: work/android
+          persist-credentials: false
+      - name: Install dependencies
+        working-directory: work/clients
+        run: |
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          npm ci --no-audit --no-fund
+      - name: Build Firefox and Chromium extensions
+        working-directory: work/clients
+        run: |
+          npm run build:prod:firefox --workspace @bitwarden/browser
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          (cd apps/browser/build && zip -qr "$GITHUB_WORKSPACE/artifacts/bitwarden-firefox.zip" .)
+          npm run build:prod:chrome --workspace @bitwarden/browser
+          (cd apps/browser/build && zip -qr "$GITHUB_WORKSPACE/artifacts/bitwarden-chromium.zip" .)
+      - name: Build Linux x86_64 deb
+        working-directory: work/clients/apps/desktop
+        run: |
+          npm run build:oss
+          npx electron-builder --linux deb --x64 --publish never
+          cp dist/*.deb "$GITHUB_WORKSPACE/artifacts/"
+      - name: Set up Android build environment
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+      - name: Build open-source Android APK
+        working-directory: work/android
+        env:
+          GITHUB_TOKEN: ${{ secrets.ANDROID_SDK_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x ./gradlew
+          ./gradlew :app:assembleFdroidRelease
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          cp app/build/outputs/apk/fdroid/release/com.x8bit.bitwarden-fdroid.apk \
+            "$GITHUB_WORKSPACE/artifacts/bitwarden-android-fdroid.apk"
+      - name: Publish release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}-${{ github.run_attempt }}
+          name: Open-source client builds ${{ github.run_number }}
+          prerelease: true
+          generate_release_notes: false
+          files: artifacts/*
+
